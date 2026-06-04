@@ -21,7 +21,7 @@ python -m pip install -e .
 After installation, run:
 
 ```bash
-choirgen melody.mid examples/example.casl
+python -m choirgen.cli melody.mid examples/example.casl
 ```
 
 This command writes a two-voice MIDI file next to the input melody by default.
