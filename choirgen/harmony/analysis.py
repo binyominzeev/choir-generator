@@ -95,6 +95,7 @@ def _scale_fit_score(pitch_classes: list[int], tonic_pc: int, scale: list[int]) 
     scale_pcs = {(tonic_pc + interval) % 12 for interval in scale}
     in_scale = sum(1 for pc in pitch_classes if pc in scale_pcs)
     tonic_hits = sum(1 for pc in pitch_classes if pc == tonic_pc)
+    # Slight tonic bias helps break ties toward keys where melody resolves on tonic.
     return in_scale + tonic_hits * 0.15
 
 

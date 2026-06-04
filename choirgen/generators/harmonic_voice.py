@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from choirgen.generators.base import GenerationContext
-from choirgen.models.score import Part, note_name_to_midi
+from choirgen.models.score import NoteEvent, Part, note_name_to_midi
 from choirgen.models.spec import VoiceSpec
 from choirgen.rules.engine import WeightedConstraintEngine
 
@@ -210,10 +210,11 @@ def _select_weighted_candidate(scored: list[tuple[int, float]], context: Generat
         cumulative += weight
         if pick <= cumulative:
             return pitch
+    # Floating-point rounding can leave a tiny uncovered tail; use last candidate deterministically.
     return pool[-1][0]
 
 
-def _apply_expression(notes, context: GenerationContext):
+def _apply_expression(notes: list[NoteEvent], context: GenerationContext) -> list[NoteEvent]:
     if not notes:
         return notes
 

@@ -138,6 +138,8 @@ class CaslParser:
                 ),
                 voice_variation=RandomizationVariationSpec(
                     enabled=bool(voice_variation_data.get("enabled", False)),
+                    # CASL 1.0 compatibility: if CASL 2.0 voice_variation is absent,
+                    # reuse legacy variation.note_choice_probability as intensity.
                     intensity=float(voice_variation_data.get("intensity", variation_data.get("note_choice_probability", 0.0))),
                 ),
                 rhythm_variation=RandomizationVariationSpec(
