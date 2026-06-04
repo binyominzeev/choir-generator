@@ -2,26 +2,30 @@
 
 ## System architecture
 
-The prototype is organized around a small clean-architecture pipeline:
+The generator uses a layered pipeline aligned with CASL 2.0:
 
-1. `choirgen.cli` parses command-line arguments.
-2. `choirgen.parser.casl` loads the YAML-based CASL document into typed specification models.
-3. `choirgen.midi.reader` loads a monophonic MIDI melody into internal note models.
-4. `choirgen.generators` selects a strategy implementation for each generated voice.
-5. `choirgen.rules.engine` applies post-generation rules such as range handling.
-6. `choirgen.exporters` writes the final arrangement to MIDI and reserves a future MusicXML extension point.
+1. `choirgen.cli` parses command-line arguments and optional CASL version checks.
+2. `choirgen.parser.casl` loads CASL 1.0/2.0 YAML into typed specification models.
+3. `choirgen.midi.reader` loads a monophonic melody into internal note models.
+4. `choirgen.harmony.analysis` infers key and per-note harmonic context.
+5. `choirgen.phrases.detector` finds phrase shape points (start/climax/end).
+6. `choirgen.generators` builds generated parts using strategy implementations (`fixed_interval` and harmony-aware generation).
+7. `choirgen.rules.engine` applies post-generation rules and exposes weighted rule access.
+8. `choirgen.exporters` writes final arrangements to MIDI (MusicXML stub retained for future work).
 
 ## Module responsibilities
 
-- `choirgen.models.spec`: typed CASL configuration objects.
-- `choirgen.models.score`: internal note, part, arrangement, and pitch helpers.
+- `choirgen.models.spec`: typed CASL configuration objects for both versions.
+- `choirgen.models.score`: internal note/part/arrangement and pitch helpers.
 - `choirgen.parser`: CASL parsing and validation.
-- `choirgen.generators`: voice-generation strategies and factory selection.
-- `choirgen.rules`: a rule-engine layer designed for future voice-leading constraints.
+- `choirgen.harmony`: harmonic abstraction and chord inference per melody note.
+- `choirgen.phrases`: phrase detection profiles used by expression shaping.
+- `choirgen.generators`: voice-generation strategies and factory resolution.
+- `choirgen.rules`: deterministic post-rules plus weighted-constraint access helpers.
 - `choirgen.midi`: MIDI import logic.
-- `choirgen.exporters`: output adapters for MIDI and future MusicXML support.
-- `choirgen.app`: orchestration service for the full pipeline.
+- `choirgen.exporters`: output adapters.
+- `choirgen.app`: orchestration of the full CASL execution pipeline.
 
-## Processing pipeline
+## Processing pipeline details
 
-The current prototype reads one melody, keeps the original line as the source voice, generates one or more new voices from strategy definitions, applies rule-engine passes, and exports the combined arrangement. The separation between parser, strategies, rules, and exporters is intended to let future work add richer CASL syntax, many more rules, and multiple output backends without redesigning the core flow.
+CASL 2.0 generated voices are harmony-driven by default, not fixed intervals. Candidate notes are chosen from inferred chord tones and scored by weighted constraints (stepwise preference, leap limits, common-tone retention, and hard forbids such as crossing/parallels). Phrase-aware expression shaping adjusts velocities toward climax and decay based on specification behavior.

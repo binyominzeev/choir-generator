@@ -12,13 +12,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("specification", help="Path to the CASL YAML specification file")
     parser.add_argument("-o", "--output", help="Path for the generated output file")
     parser.add_argument("--format", choices=["midi", "musicxml"], default="midi", help="Output format")
+    parser.add_argument("--casl-version", choices=["1.0", "2.0"], help="Require a specific CASL version")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     app = ChoirGeneratorApp()
-    output_path = app.generate(args.melody, args.specification, args.output, args.format)
+    output_path = app.generate(
+        args.melody,
+        args.specification,
+        args.output,
+        args.format,
+        expected_casl_version=args.casl_version,
+    )
     print(Path(output_path))
     return 0
 

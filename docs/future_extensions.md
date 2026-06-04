@@ -1,31 +1,23 @@
 # Future Extensions
 
-The prototype intentionally keeps strong extension seams for later musical sophistication.
+CASL 2.0 is now implemented as a harmony-aware, SATB-ready baseline. The following remain natural next steps.
 
-## SATB generation
+## Multi-phrase form handling
 
-Future versions can add more generated voices in CASL and map them to soprano, alto, tenor, and bass templates with independent ranges and strategies.
+The current phrase detector identifies one phrase profile (start/climax/end). Future work can segment full pieces into multiple phrases and apply cadence/dynamics behavior per segment.
 
-## Harmony analysis
+## Richer harmonic reasoning
 
-A harmonic analysis layer could infer key, chord context, and cadence regions before generation so strategies can target chord tones or idiomatic hymn harmonies.
+The harmonic model is functional and diatonic-first. Extensions can add secondary dominants, modal interchange, and style-specific reinterpretation modules.
 
-## Voice-leading optimization
+## Global SATB spacing constraints
 
-The rule engine can grow from a simple range pass into a larger constraint system covering parallel fifths, octaves, leap size, spacing, and cadence handling.
+Current hard constraints focus on voice crossing/parallels against melody context. Future optimization can evaluate all generated voices together (spacing, doublings, unresolved tendency tones).
 
-## Phrase detection
+## MusicXML expression export
 
-Phrase boundaries can become part of the processing context so future rules shape motion, suspensions, and cadential behavior by phrase.
+Expression shaping currently affects MIDI velocities. Future work can serialize explicit dynamics, phrase marks, articulations, and slurs to MusicXML.
 
-## Dynamics generation
+## Extension loading runtime
 
-The exporter abstraction leaves room for future expressive layers that calculate crescendos, accents, and articulation and serialize them in MusicXML or richer MIDI output.
-
-## Text-aware arrangements
-
-A later text model could coordinate syllables, stresses, and lyric underlay with note generation so the arranger works for real choir repertoire.
-
-## AI-assisted harmonization
-
-CASL can evolve to include learned-model settings, confidence thresholds, and hybrid workflows where AI suggestions are filtered through deterministic musical rules.
+CASL already accepts extension declarations by name. Future work can wire these names to plugin loading so extension packages can contribute new rules and weighting profiles at runtime.
