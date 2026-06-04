@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "choir-generator"
+version = "0.1.0"
+description = "Generate simple choir accompaniment voices from a monophonic MIDI melody"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "mido>=1.3",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+choirgen = "choirgen.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["choirgen*"]
