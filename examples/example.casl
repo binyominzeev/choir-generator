@@ -1,0 +1,24 @@
+project:
+  name: Simple Alto Demo
+
+melody:
+  source: input
+
+randomization:
+  seed: 42
+  variation:
+    note_choice_probability: 0.15
+
+voices:
+  melody:
+    source: original
+
+  alto:
+    generate: true
+    range:
+      low: G3
+      high: D5
+    strategy:
+      type: fixed_interval
+      interval:
+        semitones: -4
