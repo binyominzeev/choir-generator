@@ -1,24 +1,10 @@
-# CASL Language
-
-## Philosophy
-
-CASL is a declarative choir-arrangement DSL. It describes constraints, harmonic behavior, and voice roles instead of directly encoding notes.
-
-## Supported versions
-
-- CASL 1.0: legacy voice generation via explicit per-voice strategies (for example `fixed_interval`).
-- CASL 2.0: harmony-aware SATB-ready generation with weighted rules, phrase-aware shaping, and extension hooks.
-
-## CASL 2.0 structure
-
-```yaml
 project:
-  name: string
+  name: Advanced SATB Demo
   version: "2.0"
 
 melody:
-  source: midi | musicxml
-  file: string
+  source: midi
+  file: examples/sample.mid
 
 analysis:
   key_detection: true
@@ -26,7 +12,7 @@ analysis:
   phrase_detection: true
 
 arrangement:
-  type: SATB | SAB | TTBB | custom
+  type: SATB
 
 harmony:
   mode: functional
@@ -74,6 +60,16 @@ rules:
     weight: 0.9
 
 voice_assignment:
+  soprano:
+    priority:
+      melody: 1.0
+  alto:
+    priority:
+      chord_tones: 0.8
+      passing_tones: 0.2
+  tenor:
+    priority:
+      chord_tones: 0.9
   bass:
     priority:
       root_motion: 1.0
@@ -94,6 +90,8 @@ randomization:
   voice_variation:
     enabled: true
     intensity: 0.1
+  rhythm_variation:
+    enabled: false
 
 expression:
   dynamics:
@@ -105,18 +103,4 @@ expression:
 
 extensions:
   - name: jazz_rules
-```
-
-## Execution model
-
-1. MIDI ingestion
-2. Key and phrase detection
-3. Harmonic inference
-4. Voice allocation
-5. Voice-leading optimization with weighted constraints
-6. Expression assignment
-7. MIDI (and future MusicXML) export
-
-## Backward compatibility
-
-CASL 1.0 files remain valid. If a generated voice in CASL 1.0 omits `strategy`, parsing succeeds but generation fails with a clear error message. In CASL 2.0, generated voices default to the harmonic voice strategy when strategy is omitted.
+  - name: baroque_voice_leading
