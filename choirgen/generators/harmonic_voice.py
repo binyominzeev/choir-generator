@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from choirgen.generators.base import GenerationContext
 from choirgen.models.score import NoteEvent, Part, note_name_to_midi
@@ -8,6 +8,26 @@ from choirgen.models.spec import VoiceSpec
 from choirgen.rules.engine import WeightedConstraintEngine
 
 _DYNAMIC_VELOCITY = {"pp": 38, "p": 50, "mp": 62, "mf": 74, "f": 88, "ff": 102}
+_LEVEL_WEIGHT = {"low": 0.3, "medium": 0.6, "high": 0.9, "strong": 1.0}
+
+
+@dataclass(slots=True)
+class CandidateScore:
+    harmony_score: float
+    voice_leading_score: float
+    cadence_score: float
+    phrase_score: float
+    voice_assignment_score: float
+
+    @property
+    def total(self) -> float:
+        return (
+            self.harmony_score
+            * self.voice_leading_score
+            * self.cadence_score
+            * self.phrase_score
+            * self.voice_assignment_score
+        )
 
 
 class HarmonicVoiceStrategy:
@@ -42,7 +62,9 @@ class HarmonicVoiceStrategy:
         previous_pitch: int | None = None
         previous_melody_pitch: int | None = None
         previous_chord: tuple[int, int, int] | None = None
+        previous_root_pc: int | None = None
         default_target_offset = _default_offset(voice.name)
+        voice_breakdown: list[dict[str, float]] = []
 
         for index, melody_note in enumerate(melody.notes):
             harmonic_index = min(index, len(context.harmony.moments) - 1)
@@ -53,6 +75,7 @@ class HarmonicVoiceStrategy:
                 low=low,
                 high=high,
                 offset=default_target_offset,
+                include_passing=(voice.priority.passing_tones or 0.0) > 0.0,
             )
             scored = [
                 (
@@ -71,22 +94,44 @@ class HarmonicVoiceStrategy:
                         forbid_crossing=forbid_crossing,
                         forbid_parallel_fifths=forbid_parallel_fifths,
                         forbid_parallel_octaves=forbid_parallel_octaves,
-                        root_motion_preference=voice.priority.root_motion if voice.priority.root_motion is not None else 0.0,
+                        root_motion_preference=voice.priority.root_motion or 0.0,
+                        melody_priority=voice.priority.melody or 0.0,
+                        chord_tones_priority=voice.priority.chord_tones or 0.0,
+                        passing_tones_priority=voice.priority.passing_tones or 0.0,
+                        current_chord=moment.chord_pcs,
                         root_pc=moment.root_pc,
+                        previous_root_pc=previous_root_pc,
+                        index=index,
+                        total_notes=len(melody.notes),
+                        context=context,
                     ),
                 )
                 for candidate in candidates
             ]
 
-            scored.sort(key=lambda item: item[1], reverse=True)
-            selected_pitch = _select_weighted_candidate(scored, context)
+            scored.sort(key=lambda item: item[1].total, reverse=True)
+            selected_pitch, selected_score = _select_weighted_candidate(scored, context)
 
             notes.append(replace(melody_note, pitch=selected_pitch))
+            voice_breakdown.append(
+                {
+                    "index": float(index),
+                    "harmony_score": selected_score.harmony_score,
+                    "voice_leading_score": selected_score.voice_leading_score,
+                    "cadence_score": selected_score.cadence_score,
+                    "phrase_score": selected_score.phrase_score,
+                    "voice_assignment_score": selected_score.voice_assignment_score,
+                    "score": selected_score.total,
+                }
+            )
             previous_pitch = selected_pitch
             previous_melody_pitch = melody_note.pitch
             previous_chord = moment.chord_pcs
+            previous_root_pc = moment.root_pc
 
         shaped_notes = _apply_expression(notes, context)
+        if context.explain:
+            context.voice_score_breakdown[voice.name] = voice_breakdown
         return melody.clone(name=voice.name, notes=shaped_notes)
 
 
@@ -101,22 +146,33 @@ def _default_offset(voice_name: str) -> int:
     return -7
 
 
-def _build_candidates(chord_pcs: tuple[int, int, int], melody_pitch: int, low: int | None, high: int | None, offset: int) -> list[int]:
+def _build_candidates(
+    chord_pcs: tuple[int, int, int],
+    melody_pitch: int,
+    low: int | None,
+    high: int | None,
+    offset: int,
+    include_passing: bool,
+) -> list[int]:
     target = melody_pitch + offset
     start = low if low is not None else target - 24
     end = high if high is not None else target + 24
     if start > end:
         start, end = end, start
 
-    candidates = [pitch for pitch in range(start, end + 1) if pitch % 12 in chord_pcs]
+    candidates: set[int] = {pitch for pitch in range(start, end + 1) if pitch % 12 in chord_pcs}
+    if include_passing:
+        for pitch in range(max(start, target - 2), min(end, target + 2) + 1):
+            if pitch % 12 not in chord_pcs:
+                candidates.add(pitch)
     if not candidates:
         clamped_target = target
         if low is not None:
             clamped_target = max(clamped_target, low)
         if high is not None:
             clamped_target = min(clamped_target, high)
-        candidates = [clamped_target]
-    return candidates
+        return [clamped_target]
+    return sorted(candidates)
 
 
 def _score_candidate(
@@ -135,42 +191,106 @@ def _score_candidate(
     forbid_parallel_fifths: bool,
     forbid_parallel_octaves: bool,
     root_motion_preference: float,
+    melody_priority: float,
+    chord_tones_priority: float,
+    passing_tones_priority: float,
+    current_chord: tuple[int, int, int],
     root_pc: int,
-) -> float:
-    score = 0.0
+    previous_root_pc: int | None,
+    index: int,
+    total_notes: int,
+    context: GenerationContext,
+) -> CandidateScore:
+    harmony_score = 1.0 if candidate % 12 in current_chord else 0.7
+    voice_leading_score = 1.0
+    cadence_score = 1.0
+    phrase_score = 1.0
+    voice_assignment_score = 1.0
 
     if forbid_crossing and candidate >= melody_pitch:
-        score -= 1000.0
+        voice_leading_score *= 0.001
 
-    score += root_motion_preference if candidate % 12 == root_pc else 0.0
+    if candidate % 12 == root_pc:
+        harmony_score *= 1.0 + root_motion_preference * 0.2
 
     if previous_pitch is None or previous_melody_pitch is None:
-        return score
+        voice_assignment_score = _voice_assignment_score(
+            candidate=candidate,
+            melody_pitch=melody_pitch,
+            root_pc=root_pc,
+            melody_priority=melody_priority,
+            chord_tones_priority=chord_tones_priority,
+            passing_tones_priority=passing_tones_priority,
+            root_motion_preference=root_motion_preference,
+            is_chord_tone=candidate % 12 in current_chord,
+        )
+        cadence_score = _cadence_score(
+            candidate=candidate,
+            root_pc=root_pc,
+            previous_root_pc=previous_root_pc,
+            index=index,
+            total_notes=total_notes,
+            context=context,
+        )
+        phrase_score = _phrase_score(index=index, total_notes=total_notes, context=context, candidate=candidate, root_pc=root_pc)
+        return CandidateScore(
+            harmony_score=max(0.001, harmony_score),
+            voice_leading_score=max(0.001, voice_leading_score),
+            cadence_score=max(0.001, cadence_score),
+            phrase_score=max(0.001, phrase_score),
+            voice_assignment_score=max(0.001, voice_assignment_score),
+        )
 
     leap = abs(candidate - previous_pitch)
-    score -= leap * stepwise_weight * 0.2
+    voice_leading_score *= max(0.2, 1.0 - leap * stepwise_weight * 0.04)
 
     if leap > max_leap:
-        score -= (leap - max_leap) * max_leap_weight * 2.0
+        voice_leading_score *= max(0.05, 1.0 - (leap - max_leap) * max_leap_weight * 0.2)
 
     if leap <= 4:
-        score += small_leap_weight
+        voice_leading_score *= 1.0 + small_leap_weight * 0.2
 
     if previous_chord and candidate % 12 in previous_chord:
-        score += common_tone_weight
+        harmony_score *= 1.0 + common_tone_weight * 0.2
 
     melody_motion = melody_pitch - previous_melody_pitch
     voice_motion = candidate - previous_pitch
 
     if forbid_parallel_fifths and _parallel_interval(previous_pitch, previous_melody_pitch, candidate, melody_pitch, 7):
-        score -= 500.0
+        voice_leading_score *= 0.05
     if forbid_parallel_octaves and _parallel_interval(previous_pitch, previous_melody_pitch, candidate, melody_pitch, 0):
-        score -= 500.0
+        voice_leading_score *= 0.05
 
     if melody_motion == 0 and voice_motion == 0:
-        score += 0.2
+        voice_leading_score *= 1.05
 
-    return score
+    cadence_score = _cadence_score(
+        candidate=candidate,
+        root_pc=root_pc,
+        previous_root_pc=previous_root_pc,
+        index=index,
+        total_notes=total_notes,
+        context=context,
+    )
+    phrase_score = _phrase_score(index=index, total_notes=total_notes, context=context, candidate=candidate, root_pc=root_pc)
+    voice_assignment_score = _voice_assignment_score(
+        candidate=candidate,
+        melody_pitch=melody_pitch,
+        root_pc=root_pc,
+        melody_priority=melody_priority,
+        chord_tones_priority=chord_tones_priority,
+        passing_tones_priority=passing_tones_priority,
+        root_motion_preference=root_motion_preference,
+        is_chord_tone=candidate % 12 in current_chord,
+    )
+
+    return CandidateScore(
+        harmony_score=max(0.001, harmony_score),
+        voice_leading_score=max(0.001, voice_leading_score),
+        cadence_score=max(0.001, cadence_score),
+        phrase_score=max(0.001, phrase_score),
+        voice_assignment_score=max(0.001, voice_assignment_score),
+    )
 
 
 def _parallel_interval(previous_voice: int, previous_melody: int, current_voice: int, current_melody: int, target_interval: int) -> bool:
@@ -180,12 +300,12 @@ def _parallel_interval(previous_voice: int, previous_melody: int, current_voice:
     return previous_interval == target_interval and current_interval == target_interval and same_direction
 
 
-def _select_weighted_candidate(scored: list[tuple[int, float]], context: GenerationContext) -> int:
+def _select_weighted_candidate(scored: list[tuple[int, CandidateScore]], context: GenerationContext) -> tuple[int, CandidateScore]:
     if not scored:
         raise ValueError("No candidates were generated")
 
-    scored.sort(key=lambda item: item[1], reverse=True)
-    best_pitch = scored[0][0]
+    scored.sort(key=lambda item: item[1].total, reverse=True)
+    best_pitch, best_score = scored[0]
 
     variation = context.specification.randomization.voice_variation
     legacy_probability = context.specification.randomization.variation.note_choice_probability
@@ -193,14 +313,14 @@ def _select_weighted_candidate(scored: list[tuple[int, float]], context: Generat
     intensity = variation.intensity if variation.enabled else legacy_probability
 
     if not enabled or intensity <= 0.0:
-        return best_pitch
+        return best_pitch, best_score
 
     pool = scored[: min(4, len(scored))]
     probabilities = []
     total = 0.0
-    baseline = pool[0][1]
+    baseline = pool[0][1].total
     for _, score in pool:
-        weight = max(0.0001, 1.0 + (score - baseline + 1.0) * intensity)
+        weight = max(0.0001, 1.0 + (score.total - baseline + 1.0) * intensity)
         probabilities.append(weight)
         total += weight
 
@@ -209,9 +329,113 @@ def _select_weighted_candidate(scored: list[tuple[int, float]], context: Generat
     for (pitch, _), weight in zip(pool, probabilities):
         cumulative += weight
         if pick <= cumulative:
-            return pitch
+            for scored_pitch, scored_score in pool:
+                if scored_pitch == pitch:
+                    return pitch, scored_score
     # Floating-point rounding can leave a tiny uncovered tail; use last candidate deterministically.
-    return pool[-1][0]
+    return pool[-1]
+
+
+def _voice_assignment_score(
+    *,
+    candidate: int,
+    melody_pitch: int,
+    root_pc: int,
+    melody_priority: float,
+    chord_tones_priority: float,
+    passing_tones_priority: float,
+    root_motion_preference: float,
+    is_chord_tone: bool,
+) -> float:
+    distance = abs(melody_pitch - candidate)
+    melody_fit = max(0.2, 1.0 - distance / 24.0)
+    score = 1.0 + melody_priority * melody_fit
+    if is_chord_tone:
+        score += chord_tones_priority
+    else:
+        score += passing_tones_priority
+    if candidate % 12 == root_pc:
+        score += root_motion_preference
+    return max(0.05, score)
+
+
+def _cadence_score(
+    *,
+    candidate: int,
+    root_pc: int,
+    previous_root_pc: int | None,
+    index: int,
+    total_notes: int,
+    context: GenerationContext,
+) -> float:
+    at_end = _at_phrase_end(index, total_notes, context)
+    before_end = _one_before_end(index, total_notes, context)
+    score = 1.0
+    if not at_end and not before_end:
+        return score
+
+    tonic = context.harmony.tonic_pc if context.harmony is not None else root_pc
+    authentic_weight = _level_value(context.specification.harmony.cadence_model.authentic, 0.0)
+    plagal_weight = _level_value(context.specification.harmony.cadence_model.plagal, 0.0)
+
+    if at_end:
+        if previous_root_pc == (tonic + 7) % 12 and root_pc == tonic:
+            score *= 1.0 + authentic_weight
+        elif previous_root_pc == (tonic + 5) % 12 and root_pc == tonic:
+            score *= 1.0 + plagal_weight
+        elif root_pc == tonic:
+            score *= 1.0 + max(authentic_weight, plagal_weight) * 0.5
+    elif before_end:
+        if root_pc == (tonic + 7) % 12:
+            score *= 1.0 + authentic_weight * 0.5
+        if root_pc == (tonic + 5) % 12:
+            score *= 1.0 + plagal_weight * 0.5
+
+    cadence_strength = _cadence_strength(index, total_notes, context)
+    if at_end and cadence_strength > 1.0 and candidate % 12 == tonic:
+        score *= cadence_strength
+    return max(0.05, score)
+
+
+def _phrase_score(*, index: int, total_notes: int, context: GenerationContext, candidate: int, root_pc: int) -> float:
+    score = _cadence_strength(index, total_notes, context)
+    if _at_phrase_end(index, total_notes, context) and candidate % 12 != root_pc and score > 1.0:
+        score *= 0.85
+    return max(0.05, score)
+
+
+def _cadence_strength(index: int, total_notes: int, context: GenerationContext) -> float:
+    behavior = context.specification.phrases.behavior
+    phrase = context.phrase
+    if phrase is None:
+        if index == 0:
+            return _level_value(behavior.start.cadence_strength, 1.0)
+        if index == total_notes - 1:
+            return _level_value(behavior.end.cadence_strength, 1.0)
+        return _level_value(behavior.climax.cadence_strength, 1.0)
+    if index <= phrase.start_index:
+        return _level_value(behavior.start.cadence_strength, 1.0)
+    if index >= phrase.end_index:
+        return _level_value(behavior.end.cadence_strength, 1.0)
+    return _level_value(behavior.climax.cadence_strength, 1.0)
+
+
+def _at_phrase_end(index: int, total_notes: int, context: GenerationContext) -> bool:
+    if context.phrase is not None:
+        return index >= context.phrase.end_index
+    return index == total_notes - 1
+
+
+def _one_before_end(index: int, total_notes: int, context: GenerationContext) -> bool:
+    if context.phrase is not None:
+        return index == max(0, context.phrase.end_index - 1)
+    return index == max(0, total_notes - 2)
+
+
+def _level_value(level: str | None, default: float) -> float:
+    if level is None:
+        return default
+    return _LEVEL_WEIGHT.get(level.lower(), default)
 
 
 def _apply_expression(notes: list[NoteEvent], context: GenerationContext) -> list[NoteEvent]:
