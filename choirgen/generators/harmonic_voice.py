@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from choirgen.generators.base import GenerationContext
+from choirgen.harmony.scoring import cadence_strength_for_index, level_weight
 from choirgen.models.score import NoteEvent, Part, note_name_to_midi
 from choirgen.models.spec import VoiceSpec
 from choirgen.rules.engine import WeightedConstraintEngine
 
 _DYNAMIC_VELOCITY = {"pp": 38, "p": 50, "mp": 62, "mf": 74, "f": 88, "ff": 102}
-_LEVEL_WEIGHT = {"low": 0.3, "medium": 0.6, "high": 0.9, "strong": 1.0}
 
 
 @dataclass(slots=True)
@@ -160,19 +160,19 @@ def _build_candidates(
     if start > end:
         start, end = end, start
 
-    candidates: set[int] = {pitch for pitch in range(start, end + 1) if pitch % 12 in chord_pcs}
+    candidate_pitches_set: set[int] = {pitch for pitch in range(start, end + 1) if pitch % 12 in chord_pcs}
     if include_passing:
         for pitch in range(max(start, target - 2), min(end, target + 2) + 1):
             if pitch % 12 not in chord_pcs:
-                candidates.add(pitch)
-    if not candidates:
+                candidate_pitches_set.add(pitch)
+    if not candidate_pitches_set:
         clamped_target = target
         if low is not None:
             clamped_target = max(clamped_target, low)
         if high is not None:
             clamped_target = min(clamped_target, high)
         return [clamped_target]
-    return sorted(candidates)
+    return sorted(candidate_pitches_set)
 
 
 def _score_candidate(
@@ -326,12 +326,10 @@ def _select_weighted_candidate(scored: list[tuple[int, CandidateScore]], context
 
     pick = context.random.random() * total
     cumulative = 0.0
-    for (pitch, _), weight in zip(pool, probabilities):
+    for (pitch, score_data), weight in zip(pool, probabilities):
         cumulative += weight
         if pick <= cumulative:
-            for scored_pitch, scored_score in pool:
-                if scored_pitch == pitch:
-                    return pitch, scored_score
+            return pitch, score_data
     # Floating-point rounding can leave a tiny uncovered tail; use last candidate deterministically.
     return pool[-1]
 
@@ -405,19 +403,7 @@ def _phrase_score(*, index: int, total_notes: int, context: GenerationContext, c
 
 
 def _cadence_strength(index: int, total_notes: int, context: GenerationContext) -> float:
-    behavior = context.specification.phrases.behavior
-    phrase = context.phrase
-    if phrase is None:
-        if index == 0:
-            return _level_value(behavior.start.cadence_strength, 1.0)
-        if index == total_notes - 1:
-            return _level_value(behavior.end.cadence_strength, 1.0)
-        return _level_value(behavior.climax.cadence_strength, 1.0)
-    if index <= phrase.start_index:
-        return _level_value(behavior.start.cadence_strength, 1.0)
-    if index >= phrase.end_index:
-        return _level_value(behavior.end.cadence_strength, 1.0)
-    return _level_value(behavior.climax.cadence_strength, 1.0)
+    return cadence_strength_for_index(index, total_notes, context.phrase, context.specification.phrases.behavior)
 
 
 def _at_phrase_end(index: int, total_notes: int, context: GenerationContext) -> bool:
@@ -433,9 +419,7 @@ def _one_before_end(index: int, total_notes: int, context: GenerationContext) ->
 
 
 def _level_value(level: str | None, default: float) -> float:
-    if level is None:
-        return default
-    return _LEVEL_WEIGHT.get(level.lower(), default)
+    return level_weight(level, default)
 
 
 def _apply_expression(notes: list[NoteEvent], context: GenerationContext) -> list[NoteEvent]:

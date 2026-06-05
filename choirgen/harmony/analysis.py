@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from choirgen.models.score import Part
 from choirgen.models.spec import ArrangementSpec
+from choirgen.harmony.scoring import cadence_strength_for_index, level_weight
 
 if TYPE_CHECKING:
     from choirgen.phrases.detector import PhraseProfile
@@ -31,7 +32,6 @@ _EMOTIONS = {
     "VI": "softness",
     "VII": "instability",
 }
-_LEVEL_WEIGHT = {"low": 0.3, "medium": 0.6, "high": 0.9, "strong": 1.0}
 
 
 @dataclass(slots=True)
@@ -225,19 +225,15 @@ def _score_harmony_candidate(
     }
 
 
-def _cadence_strength_for_index(index: int, total_notes: int, phrase: PhraseProfile | None, specification: ArrangementSpec) -> float:
-    behavior = specification.phrases.behavior
-    if phrase is None:
-        if index == 0:
-            return _level_value(behavior.start.cadence_strength, 1.0)
-        if index == total_notes - 1:
-            return _level_value(behavior.end.cadence_strength, 1.0)
-        return _level_value(behavior.climax.cadence_strength, 1.0)
-    if index <= phrase.start_index:
-        return _level_value(behavior.start.cadence_strength, 1.0)
-    if index >= phrase.end_index:
-        return _level_value(behavior.end.cadence_strength, 1.0)
-    return _level_value(behavior.climax.cadence_strength, 1.0)
+def _cadence_strength_for_index(
+    index: int,
+    total_notes: int,
+    phrase: PhraseProfile | None,
+    specification: ArrangementSpec | None,
+) -> float:
+    if specification is None:
+        return 1.0
+    return cadence_strength_for_index(index, total_notes, phrase, specification.phrases.behavior)
 
 
 def _is_phrase_end(index: int, total_notes: int, phrase: PhraseProfile | None) -> bool:
@@ -253,9 +249,7 @@ def _is_one_before_phrase_end(index: int, total_notes: int, phrase: PhraseProfil
 
 
 def _level_value(level: str | None, default: float) -> float:
-    if level is None:
-        return default
-    return _LEVEL_WEIGHT.get(level.lower(), default)
+    return level_weight(level, default)
 
 
 def _compress_progression(romans: list[str]) -> list[str]:
